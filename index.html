@@ -66,7 +66,8 @@
     <div id="root"></div>
 
     <script type="text/babel">
-        const { useState, useEffect } = React;
+        const { useState, useEffect, useMemo } = React;
+        const { BarChart, Bar, LineChart, Line, PieChart, Pie, Cell, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer } = window.recharts || {};
 
         const BudgetTrackerApp = () => {
             const [activeTab, setActiveTab] = useState('dashboard');
@@ -79,7 +80,31 @@
             const [budgets, setBudgets] = useState({});
             const [currentMonth, setCurrentMonth] = useState(new Date());
             const [householdMember, setHouseholdMember] = useState('all');
-            const [isHydrated, setIsHydrated] = useState(false);
+
+            // Load/save data
+            useEffect(() => {
+                const savedData = localStorage.getItem('budgetTrackerData');
+                if (savedData) {
+                    try {
+                        const data = JSON.parse(savedData);
+                        setIncome(data.income || []);
+                        setExpenses(data.expenses || []);
+                        setBills(data.bills || []);
+                        setSavingsGoals(data.savingsGoals || []);
+                        setBudgets(data.budgets || {});
+                    } catch (e) {
+                        loadDemoData();
+                    }
+                } else {
+                    loadDemoData();
+                }
+            }, []);
+
+            useEffect(() => {
+                localStorage.setItem('budgetTrackerData', JSON.stringify({
+                    income, expenses, bills, savingsGoals, budgets
+                }));
+            }, [income, expenses, bills, savingsGoals, budgets]);
 
             const loadDemoData = () => {
                 const today = new Date();
@@ -127,61 +152,31 @@
                     'Gas': 200,
                     'Utilities': 150
                 });
-                setIsHydrated(true);
             };
 
-            useEffect(() => {
-                const savedData = localStorage.getItem('budgetTrackerData');
-                if (savedData) {
-                    try {
-                        const data = JSON.parse(savedData);
-                        setIncome(data.income || []);
-                        setExpenses(data.expenses || []);
-                        setBills(data.bills || []);
-                        setSavingsGoals(data.savingsGoals || []);
-                        setBudgets(data.budgets || {});
-                        setIsHydrated(true);
-                    } catch (e) {
-                        loadDemoData();
-                    }
-                } else {
-                    loadDemoData();
-                }
-            }, []);
-
-            useEffect(() => {
-                if (!isHydrated) return;
-                localStorage.setItem('budgetTrackerData', JSON.stringify({ income, expenses, bills, savingsGoals, budgets }));
-            }, [income, expenses, bills, savingsGoals, budgets, isHydrated]);
-
+            // Calculations
             const monthStart = new Date(currentMonth.getFullYear(), currentMonth.getMonth(), 1);
             const monthEnd = new Date(currentMonth.getFullYear(), currentMonth.getMonth() + 1, 0);
 
-            const monthlyIncome = income.reduce((sum, inc) => sum + Number(inc.amount || 0), 0);
-            const monthlyExpenses = expenses
-                .filter(exp => exp.date >= monthStart && exp.date <= monthEnd)
-                .reduce((sum, exp) => sum + Number(exp.amount || 0), 0);
-            const monthlyBills = bills.reduce((sum, bill) => sum + Number(bill.amount || 0), 0);
-            const totalSavings = savingsGoals.reduce((sum, goal) => sum + Number(goal.current || 0), 0);
+            const monthlyIncome = income.reduce((sum, inc) => sum + inc.amount, 0);
+            const monthlyExpenses = expenses.filter(exp => exp.date >= monthStart && exp.date <= monthEnd)
+                .reduce((sum, exp) => sum + exp.amount, 0);
+            const monthlyBills = bills.reduce((sum, bill) => sum + bill.amount, 0);
+            const totalSavings = savingsGoals.reduce((sum, goal) => sum + goal.current, 0);
             const remainingBalance = monthlyIncome - monthlyExpenses - monthlyBills;
-            const savingsRate = monthlyIncome > 0 ? ((totalSavings / monthlyIncome) * 100).toFixed(1) : 0;
+            const savingsRate = monthlyIncome > 0 ? (totalSavings / monthlyIncome * 100).toFixed(1) : 0;
 
             const budgetUsed = {};
-            expenses
-                .filter(exp => exp.date >= monthStart && exp.date <= monthEnd)
-                .forEach(exp => {
-                    const amount = Number(exp.amount || 0);
-                    const category = exp.category || 'Uncategorized';
-                    budgetUsed[category] = (budgetUsed[category] || 0) + amount;
-                });
+            expenses.filter(exp => exp.date >= monthStart && exp.date <= monthEnd).forEach(exp => {
+                budgetUsed[exp.category] = (budgetUsed[exp.category] || 0) + exp.amount;
+            });
 
-            const totalBudgetUsed = Object.values(budgetUsed).reduce((sum, value) => sum + Number(value || 0), 0);
-            const totalMonthlyBudget = Object.values(budgets).reduce((sum, value) => sum + Number(value || 0), 0);
-            const budgetRemaining = totalMonthlyBudget - totalBudgetUsed;
-            const budgetPercentage = totalMonthlyBudget > 0 ? ((totalBudgetUsed / totalMonthlyBudget) * 100).toFixed(1) : 0;
+            const totalMonthlyBudget = Object.values(budgets).reduce((a, b) => a + b, 0);
+            const budgetRemaining = totalMonthlyBudget - Object.values(budgetUsed).reduce((a, b) => a + b, 0);
+            const budgetPercentage = totalMonthlyBudget > 0 ? (Object.values(budgetUsed).reduce((a, b) => a + b, 0) / totalMonthlyBudget * 100).toFixed(1) : 0;
 
             const expensesByCategory = Object.entries(budgetUsed)
-                .map(([name, value]) => ({ name, value: Number(value || 0) }))
+                .map(([name, value]) => ({ name, value }))
                 .sort((a, b) => b.value - a.value);
 
             const formatCurrency = (value) => {
@@ -190,7 +185,7 @@
                     currency: currency,
                     minimumFractionDigits: 2,
                     maximumFractionDigits: 2
-                }).format(Number(value || 0));
+                }).format(value);
             };
 
             const formatDate = (date) => {
@@ -201,6 +196,7 @@
                 });
             };
 
+            // Components
             const SummaryCard = ({ label, value, subtext, icon }) => (
                 <div className={`border rounded-lg p-6 transition-all ${darkMode ? 'bg-slate-800 border-slate-700' : 'bg-white border-slate-200'}`}>
                     <div className="flex items-start justify-between">
@@ -215,8 +211,7 @@
             );
 
             const ProgressBar = ({ value, max, showValue = true }) => {
-                const safeMax = Number(max) > 0 ? Number(max) : 1;
-                const percentage = (Number(value || 0) / safeMax) * 100;
+                const percentage = (value / max) * 100;
                 let color = '#10b981';
                 if (percentage >= 100) color = '#ef4444';
                 else if (percentage >= 80) color = '#f59e0b';
@@ -231,6 +226,7 @@
                 );
             };
 
+            // Views
             const DashboardView = () => (
                 <div className="space-y-6">
                     <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
@@ -248,13 +244,13 @@
                             </div>
                             <div className="flex items-center justify-between">
                                 <span className={`text-sm ${darkMode ? 'text-slate-400' : 'text-slate-600'}`}>Spent</span>
-                                <span className={`font-semibold ${darkMode ? 'text-white' : 'text-slate-900'}`}>{formatCurrency(totalBudgetUsed)}</span>
+                                <span className={`font-semibold ${darkMode ? 'text-white' : 'text-slate-900'}`}>{formatCurrency(Object.values(budgetUsed).reduce((a, b) => a + b, 0))}</span>
                             </div>
                             <div className="flex items-center justify-between">
                                 <span className={`text-sm ${darkMode ? 'text-slate-400' : 'text-slate-600'}`}>Remaining</span>
                                 <span className={`font-semibold ${budgetRemaining >= 0 ? (darkMode ? 'text-green-400' : 'text-green-600') : (darkMode ? 'text-red-400' : 'text-red-600')}`}>{formatCurrency(budgetRemaining)}</span>
                             </div>
-                            <ProgressBar value={totalBudgetUsed} max={totalMonthlyBudget} />
+                            <ProgressBar value={Object.values(budgetUsed).reduce((a, b) => a + b, 0)} max={totalMonthlyBudget} />
                         </div>
                     </div>
 
@@ -268,19 +264,16 @@
                         <div className={`border rounded-lg p-6 ${darkMode ? 'bg-slate-800 border-slate-700' : 'bg-white border-slate-200'}`}>
                             <h3 className={`text-lg font-semibold mb-4 ${darkMode ? 'text-white' : 'text-slate-900'}`}>Top Savings Goals</h3>
                             <div className="space-y-4">
-                                {savingsGoals.slice(0, 2).map(goal => {
-                                    const goalCompletion = goal.target > 0 ? (goal.current / goal.target) * 100 : 0;
-                                    return (
-                                        <div key={goal.id}>
-                                            <div className="flex items-center justify-between mb-2">
-                                                <span className={`font-medium ${darkMode ? 'text-white' : 'text-slate-900'}`}>{goal.name}</span>
-                                                <span className={`text-sm ${darkMode ? 'text-slate-400' : 'text-slate-600'}`}>{goalCompletion.toFixed(0)}%</span>
-                                            </div>
-                                            <ProgressBar value={goal.current} max={goal.target} showValue={false} />
-                                            <p className={`text-xs mt-2 ${darkMode ? 'text-slate-500' : 'text-slate-500'}`}>{formatCurrency(goal.current)} of {formatCurrency(goal.target)}</p>
+                                {savingsGoals.slice(0, 2).map(goal => (
+                                    <div key={goal.id}>
+                                        <div className="flex items-center justify-between mb-2">
+                                            <span className={`font-medium ${darkMode ? 'text-white' : 'text-slate-900'}`}>{goal.name}</span>
+                                            <span className={`text-sm ${darkMode ? 'text-slate-400' : 'text-slate-600'}`}>{((goal.current / goal.target) * 100).toFixed(0)}%</span>
                                         </div>
-                                    );
-                                })}
+                                        <ProgressBar value={goal.current} max={goal.target} showValue={false} />
+                                        <p className={`text-xs mt-2 ${darkMode ? 'text-slate-500' : 'text-slate-500'}`}>{formatCurrency(goal.current)} of {formatCurrency(goal.target)}</p>
+                                    </div>
+                                ))}
                             </div>
                         </div>
                     )}
@@ -346,23 +339,23 @@
                 <div className="space-y-4">
                     <div className="grid gap-4">
                         {Object.entries(budgets)
-                            .filter(([category]) => Number(budgets[category] || 0) > 0)
+                            .filter(([category]) => budgets[category] > 0)
                             .map(([category, budget]) => {
                                 const spent = budgetUsed[category] || 0;
-                                const remaining = Number(budget || 0) - spent;
-                                const percentage = Number(budget || 0) > 0 ? (spent / Number(budget || 0)) * 100 : 0;
+                                const remaining = budget - spent;
+                                const percentage = (spent / budget) * 100;
 
                                 return (
                                     <div key={category} className={`border rounded-lg p-4 ${darkMode ? 'bg-slate-800 border-slate-700' : 'bg-white border-slate-200'}`}>
                                         <div className="flex items-center justify-between mb-3">
                                             <span className={`font-medium ${darkMode ? 'text-white' : 'text-slate-900'}`}>{category}</span>
                                             <span className={`text-sm font-semibold ${percentage >= 100 ? (darkMode ? 'text-red-400' : 'text-red-600') : (percentage >= 80 ? (darkMode ? 'text-amber-400' : 'text-amber-600') : (darkMode ? 'text-green-400' : 'text-green-600'))}`}>
-                                                {percentage >= 100 ? `Over ${formatCurrency(spent - Number(budget || 0))}` : `${formatCurrency(remaining)} left`}
+                                                {percentage >= 100 ? `Over $${(spent - budget).toFixed(2)}` : `$${remaining.toFixed(2)} left`}
                                             </span>
                                         </div>
-                                        <ProgressBar value={spent} max={Number(budget || 0)} />
+                                        <ProgressBar value={spent} max={budget} />
                                         <div className="flex items-center justify-between mt-3 text-xs">
-                                            <span className={darkMode ? 'text-slate-400' : 'text-slate-600'}>{formatCurrency(spent)} / {formatCurrency(Number(budget || 0))}</span>
+                                            <span className={darkMode ? 'text-slate-400' : 'text-slate-600'}>{formatCurrency(spent)} / {formatCurrency(budget)}</span>
                                             <span className={darkMode ? 'text-slate-500' : 'text-slate-500'}>{percentage.toFixed(0)}% used</span>
                                         </div>
                                     </div>
@@ -381,9 +374,7 @@
                                 {expensesByCategory.slice(0, 5).map((item, index) => (
                                     <div key={item.name} className="flex items-center justify-between">
                                         <div className="flex items-center gap-3">
-                                            <span className={`inline-flex items-center justify-center w-8 h-8 rounded-full text-white text-sm font-semibold`} style={{ backgroundColor: ['#10b981', '#3b82f6', '#f59e0b', '#8b5cf6', '#ef4444'][index % 5] }}>
-                                                {item.name.charAt(0).toUpperCase()}
-                                            </span>
+                                            <span className={`inline-flex items-center justify-center w-8 h-8 rounded-full text-white text-sm font-semibold`} style={{ backgroundColor: ['#10b981', '#3b82f6', '#f59e0b', '#ef4444', '#8b5cf6'][index % 5] }}>{index + 1}</span>
                                             <span className={darkMode ? 'text-white' : 'text-slate-900'}>{item.name}</span>
                                         </div>
                                         <span className={`font-semibold ${darkMode ? 'text-white' : 'text-slate-900'}`}>{formatCurrency(item.value)}</span>
@@ -399,7 +390,7 @@
                 <div className="space-y-4">
                     {savingsGoals.length > 0 ? (
                         savingsGoals.map(goal => {
-                            const percentComplete = goal.target > 0 ? (goal.current / goal.target) * 100 : 0;
+                            const percentComplete = (goal.current / goal.target) * 100;
                             const remaining = goal.target - goal.current;
                             const daysLeft = Math.max(0, Math.ceil((new Date(goal.targetDate) - new Date()) / (1000 * 60 * 60 * 24)));
 
@@ -463,7 +454,7 @@
                         }} className="w-full px-4 py-2 rounded font-medium text-white bg-blue-600 hover:bg-blue-700 transition-colors">
                             Export Data
                         </button>
-                        <button onClick={loadDemoData} className={`w-full mt-3 px-4 py-2 rounded font-medium transition-colors ${darkMode ? 'bg-slate-700 text-white hover:bg-slate-600' : 'bg-slate-200 text-slate-700 hover:bg-slate-300'}`}>
+                        <button onClick={loadDemoData} className={`w-full mt-3 px-4 py-2 rounded font-medium transition-colors ${darkMode ? 'bg-slate-700 text-white hover:bg-slate-600' : 'bg-slate-200 text-slate-900 hover:bg-slate-300'}`}>
                             Reset to Demo Data
                         </button>
                     </div>
@@ -472,6 +463,7 @@
 
             return (
                 <div className={`min-h-screen transition-colors ${darkMode ? 'bg-slate-900 text-white' : 'bg-slate-50 text-slate-900'}`}>
+                    {/* Header */}
                     <header className={`border-b sticky top-0 z-50 ${darkMode ? 'bg-slate-800 border-slate-700' : 'bg-white border-slate-200'}`}>
                         <div className="max-w-7xl mx-auto px-4 py-4">
                             <div className="flex items-center justify-between mb-4">
@@ -505,20 +497,18 @@
                         </div>
                     </header>
 
+                    {/* Month Selector */}
                     {activeTab !== 'settings' && (
                         <div className={`border-b ${darkMode ? 'bg-slate-800 border-slate-700' : 'bg-white border-slate-200'}`}>
                             <div className="max-w-7xl mx-auto px-4 py-3 flex items-center justify-center gap-4">
-                                <button onClick={() => setCurrentMonth(new Date(currentMonth.getFullYear(), currentMonth.getMonth() - 1))} className={`px-3 py-1 rounded transition-colors ${darkMode ? 'bg-slate-700 text-white hover:bg-slate-600' : 'bg-slate-100 text-slate-700 hover:bg-slate-200'}`}>
-                                    ←
-                                </button>
+                                <button onClick={() => setCurrentMonth(new Date(currentMonth.getFullYear(), currentMonth.getMonth() - 1))} className={`px-3 py-1 rounded transition-colors ${darkMode ? 'hover:bg-slate-700' : 'hover:bg-slate-200'}`}>←</button>
                                 <span className="font-semibold min-w-[200px] text-center">{currentMonth.toLocaleDateString('en-CA', { month: 'long', year: 'numeric' })}</span>
-                                <button onClick={() => setCurrentMonth(new Date(currentMonth.getFullYear(), currentMonth.getMonth() + 1))} className={`px-3 py-1 rounded transition-colors ${darkMode ? 'bg-slate-700 text-white hover:bg-slate-600' : 'bg-slate-100 text-slate-700 hover:bg-slate-200'}`}>
-                                    →
-                                </button>
+                                <button onClick={() => setCurrentMonth(new Date(currentMonth.getFullYear(), currentMonth.getMonth() + 1))} className={`px-3 py-1 rounded transition-colors ${darkMode ? 'hover:bg-slate-700' : 'hover:bg-slate-200'}`}>→</button>
                             </div>
                         </div>
                     )}
 
+                    {/* Content */}
                     <main className="max-w-7xl mx-auto px-4 py-8">
                         {activeTab === 'dashboard' && <DashboardView />}
                         {activeTab === 'transactions' && <TransactionsView />}
